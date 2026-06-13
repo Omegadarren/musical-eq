@@ -720,6 +720,13 @@ void MusicalEQAudioProcessorEditor::visibilityChanged()
         applyZoom();
 }
 
+void MusicalEQAudioProcessorEditor::parentHierarchyChanged()
+{
+    // Called after the host embeds the editor — peer is guaranteed to exist here.
+    // This is the reliable moment to apply zoom on initial open / reopen.
+    applyZoom();
+}
+
 void MusicalEQAudioProcessorEditor::applyZoom()
 {
     if (getPeer())
