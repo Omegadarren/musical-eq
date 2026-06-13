@@ -45,6 +45,29 @@ MusicalEQAudioProcessor::buildLayout()
             1.0f));
     }
 
+    // High-pass filter
+    layout.add (std::make_unique<juce::AudioParameterBool>  ("hpfEnable", "HPF Enable", false));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        "hpfFreq", "HPF Frequency",
+        juce::NormalisableRange<float> (20.0f, 2000.0f, 0.1f, 0.35f), 80.0f,
+        juce::AudioParameterFloatAttributes().withLabel ("Hz")));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        "hpfQ", "HPF Q",
+        juce::NormalisableRange<float> (0.1f, 10.0f, 0.01f, 0.4f), 0.707f));
+
+    // Low-pass filter
+    layout.add (std::make_unique<juce::AudioParameterBool>  ("lpfEnable", "LPF Enable", false));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        "lpfFreq", "LPF Frequency",
+        juce::NormalisableRange<float> (500.0f, 20000.0f, 0.1f, 0.35f), 8000.0f,
+        juce::AudioParameterFloatAttributes().withLabel ("Hz")));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        "lpfQ", "LPF Q",
+        juce::NormalisableRange<float> (0.1f, 10.0f, 0.01f, 0.4f), 0.707f));
+
+    // Auto-gain
+    layout.add (std::make_unique<juce::AudioParameterBool> ("autoGain", "Auto Gain", false));
+
     return layout;
 }
 
@@ -88,6 +111,39 @@ void MusicalEQAudioProcessor::Biquad::makePeaking (float centreHz, float gainDb,
     a2 = (1.0f - alph / A) * a0i;
 }
 
+void MusicalEQAudioProcessor::Biquad::makeHighPass (float cutoffHz, float q, float sr) noexcept
+{
+    if (cutoffHz >= sr * 0.49f) { makeBypass(); return; }
+    float w0   = 2.0f * juce::MathConstants<float>::pi * cutoffHz / sr;
+    float sinw = std::sin (w0), cosw = std::cos (w0);
+    float alph = sinw / (2.0f * juce::jmax (q, 0.01f));
+    float a0i  = 1.0f / (1.0f + alph);
+    b0 =  (1.0f + cosw) * 0.5f  * a0i;
+    b1 = -(1.0f + cosw)          * a0i;
+    b2 =  (1.0f + cosw) * 0.5f  * a0i;
+    a1 = (-2.0f * cosw)          * a0i;
+    a2 =  (1.0f - alph)          * a0i;
+}
+
+void MusicalEQAudioProcessor::Biquad::makeLowPass (float cutoffHz, float q, float sr) noexcept
+{
+    if (cutoffHz >= sr * 0.49f) { makeBypass(); return; }
+    float w0   = 2.0f * juce::MathConstants<float>::pi * cutoffHz / sr;
+    float sinw = std::sin (w0), cosw = std::cos (w0);
+    float alph = sinw / (2.0f * juce::jmax (q, 0.01f));
+    float a0i  = 1.0f / (1.0f + alph);
+    b0 = (1.0f - cosw) * 0.5f * a0i;
+    b1 = (1.0f - cosw)         * a0i;
+    b2 = (1.0f - cosw) * 0.5f * a0i;
+    a1 = (-2.0f * cosw)        * a0i;
+    a2 = (1.0f - alph)         * a0i;
+}
+
+void MusicalEQAudioProcessor::Biquad::makeBypass() noexcept
+{
+    b0 = 1.f; b1 = b2 = a1 = a2 = 0.f;
+}
+
 float MusicalEQAudioProcessor::Biquad::process (float x, int ch) noexcept
 {
     float y = b0 * x + s1[ch];
@@ -106,6 +162,10 @@ void MusicalEQAudioProcessor::prepareToPlay (double sr, int)
 {
     currentSampleRate = sr;
     for (auto& f : filters) f.reset();
+    hpfFilter.reset();
+    lpfFilter.reset();
+    autoGainDb      = 0.f;
+    outputRmsSmooth = 0.f;
 }
 
 void MusicalEQAudioProcessor::releaseResources() {}
@@ -122,7 +182,21 @@ void MusicalEQAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     const int key        = juce::jlimit (0, 11,
                                (int)apvts.getRawParameterValue ("key")->load());
 
-    // Update all filter coefficients from current parameter values
+    const bool  hpfOn   = apvts.getRawParameterValue ("hpfEnable")->load() > 0.5f;
+    const float hpfFreq = apvts.getRawParameterValue ("hpfFreq")->load();
+    const float hpfQ    = apvts.getRawParameterValue ("hpfQ")->load();
+    const bool  lpfOn   = apvts.getRawParameterValue ("lpfEnable")->load() > 0.5f;
+    const float lpfFreq = apvts.getRawParameterValue ("lpfFreq")->load();
+    const float lpfQ    = apvts.getRawParameterValue ("lpfQ")->load();
+    const bool  agOn    = apvts.getRawParameterValue ("autoGain")->load() > 0.5f;
+
+    // Build HPF/LPF coefficients
+    if (hpfOn) hpfFilter.makeHighPass (hpfFreq, hpfQ, sr);
+    else       hpfFilter.makeBypass();
+    if (lpfOn) lpfFilter.makeLowPass  (lpfFreq, lpfQ, sr);
+    else       lpfFilter.makeBypass();
+
+    // Update peaking band coefficients
     for (int i = 0; i < kNumBands; ++i)
     {
         float gainDb = apvts.getRawParameterValue ("gain" + juce::String (i))->load();
@@ -130,22 +204,108 @@ void MusicalEQAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         filters[i].makePeaking (getBandFreq (key, i), gainDb, q, sr);
     }
 
-    // Apply all filters in series to every channel
+    // Compute auto-gain makeup (average broadband magnitude at 20 log-spaced freqs)
+    if (agOn)
+    {
+        static constexpr int kAgFreqs = 20;
+        float sumDb = 0.f;
+        for (int k = 0; k < kAgFreqs; ++k)
+        {
+            float f = 20.0f * std::pow (1000.0f, (float)k / (kAgFreqs - 1));
+            float evalDb = 0.f;
+            // HPF contribution
+            if (hpfOn)
+            {
+                float w0  = 2.f * juce::MathConstants<float>::pi * f / sr;
+                float cw  = std::cos (w0), sw = std::sin (w0);
+                float c2w = std::cos (2.f * w0), s2w = std::sin (2.f * w0);
+                float nr = hpfFilter.b0 + hpfFilter.b1 * cw + hpfFilter.b2 * c2w;
+                float ni = -(hpfFilter.b1 * sw + hpfFilter.b2 * s2w);
+                float dr = 1.f + hpfFilter.a1 * cw + hpfFilter.a2 * c2w;
+                float di = -(hpfFilter.a1 * sw + hpfFilter.a2 * s2w);
+                float d  = dr*dr + di*di;
+                if (d > 1e-12f)
+                    evalDb += 20.f * std::log10 (juce::jmax (
+                        std::sqrt ((nr*nr + ni*ni) / d), 1e-7f));
+            }
+            // LPF contribution
+            if (lpfOn)
+            {
+                float w0  = 2.f * juce::MathConstants<float>::pi * f / sr;
+                float cw  = std::cos (w0), sw = std::sin (w0);
+                float c2w = std::cos (2.f * w0), s2w = std::sin (2.f * w0);
+                float nr = lpfFilter.b0 + lpfFilter.b1 * cw + lpfFilter.b2 * c2w;
+                float ni = -(lpfFilter.b1 * sw + lpfFilter.b2 * s2w);
+                float dr = 1.f + lpfFilter.a1 * cw + lpfFilter.a2 * c2w;
+                float di = -(lpfFilter.a1 * sw + lpfFilter.a2 * s2w);
+                float d  = dr*dr + di*di;
+                if (d > 1e-12f)
+                    evalDb += 20.f * std::log10 (juce::jmax (
+                        std::sqrt ((nr*nr + ni*ni) / d), 1e-7f));
+            }
+            // Peaking bands contribution
+            for (int b = 0; b < kNumBands; ++b)
+            {
+                auto& fi = filters[b];
+                float w0  = 2.f * juce::MathConstants<float>::pi * f / sr;
+                float cw  = std::cos (w0), sw = std::sin (w0);
+                float c2w = std::cos (2.f * w0), s2w = std::sin (2.f * w0);
+                float nr = fi.b0 + fi.b1 * cw + fi.b2 * c2w;
+                float ni = -(fi.b1 * sw + fi.b2 * s2w);
+                float dr = 1.f + fi.a1 * cw + fi.a2 * c2w;
+                float di = -(fi.a1 * sw + fi.a2 * s2w);
+                float d  = dr*dr + di*di;
+                if (d > 1e-12f)
+                    evalDb += 20.f * std::log10 (juce::jmax (
+                        std::sqrt ((nr*nr + ni*ni) / d), 1e-7f));
+            }
+            sumDb += evalDb;
+        }
+        float targetDb = -(sumDb / kAgFreqs);
+        autoGainDb = juce::jlimit (-24.f, 24.f, targetDb);
+    }
+    else
+    {
+        autoGainDb = 0.f;
+    }
+
+    const float makeupLinear = std::pow (10.f, autoGainDb / 20.f);
+
+    // Apply signal chain: HPF -> peaking bands -> LPF -> auto-gain makeup
+    float sumSq = 0.f;
     for (int ch = 0; ch < numCh; ++ch)
     {
         float* data = buffer.getWritePointer (ch);
         for (int n = 0; n < numSamples; ++n)
         {
             float s = data[n];
+            s = hpfFilter.process (s, ch);
             for (auto& f : filters)
                 s = f.process (s, ch);
+            s = lpfFilter.process (s, ch);
+            s *= makeupLinear;
             data[n] = s;
+            if (ch == 0) sumSq += s * s;
         }
     }
 
     // Copy mono input to right channel if needed
     if (buffer.getNumChannels() >= 2 && numCh == 1)
         buffer.copyFrom (1, 0, buffer.getReadPointer (0), numSamples);
+
+    // Update output level meter (smoothed RMS)
+    {
+        float rms = (numSamples > 0)
+                    ? std::sqrt (sumSq / (float)numSamples)
+                    : 0.f;
+        const float coeff = std::exp (-1.f / (0.05f * (float)currentSampleRate
+                                              / juce::jmax (numSamples, 1)));
+        outputRmsSmooth = coeff * outputRmsSmooth + (1.f - coeff) * rms;
+        float db = outputRmsSmooth > 1e-6f
+                   ? 20.f * std::log10 (outputRmsSmooth)
+                   : -120.f;
+        outputLevelDb.store (juce::jlimit (-120.f, 6.f, db));
+    }
 }
 
 //==============================================================================

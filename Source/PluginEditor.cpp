@@ -62,6 +62,32 @@ public:
         setColour (juce::PopupMenu::textColourId,            kTextMain);
         setColour (juce::PopupMenu::highlightedBackgroundColourId, kAccent.withAlpha (0.30f));
         setColour (juce::PopupMenu::highlightedTextColourId, kTextMain);
+
+        // Buttons
+        setColour (juce::TextButton::buttonColourId,   kPanel);
+        setColour (juce::TextButton::buttonOnColourId, kAccent.withAlpha (0.30f));
+        setColour (juce::TextButton::textColourOnId,   kTextMain);
+        setColour (juce::TextButton::textColourOffId,  kTextDim.withAlpha (0.6f));
+    }
+
+    //--------------------------------------------------------------------------
+    void drawButtonBackground (juce::Graphics& g, juce::Button& b,
+                               const juce::Colour&, bool, bool) override
+    {
+        auto bounds = b.getLocalBounds().toFloat().reduced (0.5f);
+        bool on = b.getToggleState();
+        g.setColour (on ? kAccent.withAlpha (0.28f) : kPanel);
+        g.fillRoundedRectangle (bounds, 5.0f);
+        g.setColour (on ? kAccent : kDivider.withAlpha (0.55f));
+        g.drawRoundedRectangle (bounds.reduced (0.5f), 4.5f, 1.0f);
+    }
+
+    void drawButtonText (juce::Graphics& g, juce::TextButton& b, bool, bool) override
+    {
+        g.setFont (juce::Font (10.0f, juce::Font::bold));
+        g.setColour (b.getToggleState() ? kTextMain : kTextDim.withAlpha (0.6f));
+        g.drawText (b.getButtonText(), b.getLocalBounds(),
+                    juce::Justification::centred, false);
     }
 
     //--------------------------------------------------------------------------
@@ -156,6 +182,25 @@ public:
     }
 
 private:
+    //--------------------------------------------------------------------------
+    // Generic biquad frequency-response magnitude (dB)
+    static float biquadMagDb (float evalFreq,
+                               float b0, float b1, float b2,
+                               float a1, float a2, float sr) noexcept
+    {
+        float omega = 2.0f * juce::MathConstants<float>::pi * evalFreq / sr;
+        float cw  = std::cos (omega),        sw  = std::sin (omega);
+        float c2w = std::cos (2.0f * omega), s2w = std::sin (2.0f * omega);
+        float nr = b0 + b1 * cw + b2 * c2w;
+        float ni = -(b1 * sw + b2 * s2w);
+        float dr = 1.f + a1 * cw + a2 * c2w;
+        float di = -(a1 * sw + a2 * s2w);
+        float denom = dr * dr + di * di;
+        if (denom < 1e-12f) return -120.f;
+        return 20.f * std::log10 (juce::jmax (
+            std::sqrt ((nr * nr + ni * ni) / denom), 1e-7f));
+    }
+
     //--------------------------------------------------------------------------
     // Compute magnitude (dB) of a peaking biquad at evalFreq,
     // given the filter's centre, gain, Q and sample rate.
@@ -272,6 +317,42 @@ private:
         const int key = juce::jlimit (0, 11,
             (int)proc.apvts.getRawParameterValue ("key")->load());
 
+        const bool  hpfOn   = proc.apvts.getRawParameterValue ("hpfEnable")->load() > 0.5f;
+        const float hpfFreq = proc.apvts.getRawParameterValue ("hpfFreq")->load();
+        const float hpfQ    = proc.apvts.getRawParameterValue ("hpfQ")->load();
+        const bool  lpfOn   = proc.apvts.getRawParameterValue ("lpfEnable")->load() > 0.5f;
+        const float lpfFreq = proc.apvts.getRawParameterValue ("lpfFreq")->load();
+        const float lpfQ    = proc.apvts.getRawParameterValue ("lpfQ")->load();
+
+        // Compute HPF/LPF biquad coefficients for display
+        float hb0=1,hb1=0,hb2=0,ha1=0,ha2=0;
+        if (hpfOn && hpfFreq < kDisplaySr * 0.49f)
+        {
+            float w0  = 2.f * juce::MathConstants<float>::pi * hpfFreq / kDisplaySr;
+            float sw  = std::sin (w0), cw = std::cos (w0);
+            float alph = sw / (2.f * juce::jmax (hpfQ, 0.01f));
+            float a0i  = 1.f / (1.f + alph);
+            hb0 =  (1.f + cw) * 0.5f * a0i;
+            hb1 = -(1.f + cw)          * a0i;
+            hb2 =  (1.f + cw) * 0.5f * a0i;
+            ha1 = -2.f * cw            * a0i;
+            ha2 =  (1.f - alph)        * a0i;
+        }
+
+        float lb0=1,lb1=0,lb2=0,la1=0,la2=0;
+        if (lpfOn && lpfFreq < kDisplaySr * 0.49f)
+        {
+            float w0  = 2.f * juce::MathConstants<float>::pi * lpfFreq / kDisplaySr;
+            float sw  = std::sin (w0), cw = std::cos (w0);
+            float alph = sw / (2.f * juce::jmax (lpfQ, 0.01f));
+            float a0i  = 1.f / (1.f + alph);
+            lb0 = (1.f - cw) * 0.5f * a0i;
+            lb1 = (1.f - cw)         * a0i;
+            lb2 = (1.f - cw) * 0.5f * a0i;
+            la1 = -2.f * cw          * a0i;
+            la2 = (1.f - alph)       * a0i;
+        }
+
         struct BandInfo { float centre, gain, q; };
         BandInfo bi[MusicalEQAudioProcessor::kNumBands];
         for (int b = 0; b < MusicalEQAudioProcessor::kNumBands; ++b)
@@ -281,9 +362,11 @@ private:
             bi[b].q      = proc.apvts.getRawParameterValue ("q"    + juce::String (b))->load();
         }
 
-        // Helper: combined dB at evalFreq
+        // Helper: combined dB at evalFreq (peaking + HPF + LPF)
         auto combinedDb = [&] (float evalFreq) -> float {
             float total = 0.0f;
+            if (hpfOn) total += biquadMagDb (evalFreq, hb0,hb1,hb2,ha1,ha2, kDisplaySr);
+            if (lpfOn) total += biquadMagDb (evalFreq, lb0,lb1,lb2,la1,la2, kDisplaySr);
             for (int b = 0; b < MusicalEQAudioProcessor::kNumBands; ++b)
                 total += peakMagDb (evalFreq, bi[b].centre, bi[b].gain, bi[b].q, kDisplaySr);
             return total;
@@ -321,6 +404,60 @@ private:
             g.strokePath (linePath, juce::PathStrokeType (1.4f,
                 juce::PathStrokeType::curved,
                 juce::PathStrokeType::rounded));
+        }
+
+        // --- HPF curve ---
+        if (hpfOn)
+        {
+            juce::Colour col { 80, 200, 255 };  // bright cyan-blue
+            const float botY = mt + plotH;
+            juce::Path fillPath, linePath;
+            fillPath.startNewSubPath (mx, botY);
+            for (int p = 0; p <= kNumPoints; ++p)
+            {
+                float t    = (float)p / (float)kNumPoints;
+                float freq = std::pow (10.f, kLogMin + t * kLogRange);
+                float x    = mx + t * plotW;
+                float db   = biquadMagDb (freq, hb0,hb1,hb2,ha1,ha2, kDisplaySr);
+                float y    = juce::jlimit (mt, botY, dbToY (db));
+                fillPath.lineTo (x, y);
+                if (p == 0) linePath.startNewSubPath (x, y);
+                else        linePath.lineTo (x, y);
+            }
+            fillPath.lineTo (mx + plotW, botY);
+            fillPath.closeSubPath();
+            g.setColour (col.withAlpha (0.08f));
+            g.fillPath (fillPath);
+            g.setColour (col.withAlpha (0.75f));
+            g.strokePath (linePath, juce::PathStrokeType (1.6f,
+                juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        }
+
+        // --- LPF curve ---
+        if (lpfOn)
+        {
+            juce::Colour col { 255, 140, 80 };  // warm orange
+            const float botY = mt + plotH;
+            juce::Path fillPath, linePath;
+            fillPath.startNewSubPath (mx, botY);
+            for (int p = 0; p <= kNumPoints; ++p)
+            {
+                float t    = (float)p / (float)kNumPoints;
+                float freq = std::pow (10.f, kLogMin + t * kLogRange);
+                float x    = mx + t * plotW;
+                float db   = biquadMagDb (freq, lb0,lb1,lb2,la1,la2, kDisplaySr);
+                float y    = juce::jlimit (mt, botY, dbToY (db));
+                fillPath.lineTo (x, y);
+                if (p == 0) linePath.startNewSubPath (x, y);
+                else        linePath.lineTo (x, y);
+            }
+            fillPath.lineTo (mx + plotW, botY);
+            fillPath.closeSubPath();
+            g.setColour (col.withAlpha (0.08f));
+            g.fillPath (fillPath);
+            g.setColour (col.withAlpha (0.75f));
+            g.strokePath (linePath, juce::PathStrokeType (1.6f,
+                juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
         }
 
         // --- Combined response (white) ---
@@ -485,10 +622,89 @@ MusicalEQAudioProcessorEditor::MusicalEQAudioProcessorEditor (
 
     // Restore zoom
     zoomIndex = p.editorZoomIndex;
+
+    //──────────────────────────────────────────────────────────────────────────
+    // HPF controls
+    hpfToggle.setClickingTogglesState (true);
+    hpfToggle.setTooltip ("Enable high-pass filter");
+    addAndMakeVisible (hpfToggle);
+    hpfEnableAtt = std::make_unique<ButtonAtt> (p.apvts, "hpfEnable", hpfToggle);
+
+    hpfFreqSlider.setTextValueSuffix (" Hz");
+    hpfFreqSlider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 58, 13);
+    hpfFreqSlider.setTooltip ("High-pass filter cutoff frequency");
+    hpfFreqSlider.setColour (juce::Slider::rotarySliderFillColourId,
+                             juce::Colour (80, 200, 255));
+    addAndMakeVisible (hpfFreqSlider);
+    hpfFreqAtt = std::make_unique<SliderAtt> (p.apvts, "hpfFreq", hpfFreqSlider);
+
+    hpfFreqLabel.setText ("FREQ", juce::dontSendNotification);
+    hpfFreqLabel.setFont (juce::Font (9.0f));
+    hpfFreqLabel.setColour (juce::Label::textColourId, kTextDim);
+    hpfFreqLabel.setJustificationType (juce::Justification::centred);
+    addAndMakeVisible (hpfFreqLabel);
+
+    hpfQSlider.setNumDecimalPlacesToDisplay (2);
+    hpfQSlider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 44, 13);
+    hpfQSlider.setTooltip ("High-pass filter Q (resonance)");
+    hpfQSlider.setColour (juce::Slider::rotarySliderFillColourId,
+                          juce::Colour (80, 200, 255));
+    addAndMakeVisible (hpfQSlider);
+    hpfQAtt = std::make_unique<SliderAtt> (p.apvts, "hpfQ", hpfQSlider);
+
+    hpfQLabel.setText ("Q", juce::dontSendNotification);
+    hpfQLabel.setFont (juce::Font (9.0f));
+    hpfQLabel.setColour (juce::Label::textColourId, kTextDim);
+    hpfQLabel.setJustificationType (juce::Justification::centred);
+    addAndMakeVisible (hpfQLabel);
+
+    //──────────────────────────────────────────────────────────────────────────
+    // LPF controls
+    lpfToggle.setClickingTogglesState (true);
+    lpfToggle.setTooltip ("Enable low-pass filter");
+    addAndMakeVisible (lpfToggle);
+    lpfEnableAtt = std::make_unique<ButtonAtt> (p.apvts, "lpfEnable", lpfToggle);
+
+    lpfFreqSlider.setTextValueSuffix (" Hz");
+    lpfFreqSlider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 58, 13);
+    lpfFreqSlider.setTooltip ("Low-pass filter cutoff frequency");
+    lpfFreqSlider.setColour (juce::Slider::rotarySliderFillColourId,
+                             juce::Colour (255, 140, 80));
+    addAndMakeVisible (lpfFreqSlider);
+    lpfFreqAtt = std::make_unique<SliderAtt> (p.apvts, "lpfFreq", lpfFreqSlider);
+
+    lpfFreqLabel.setText ("FREQ", juce::dontSendNotification);
+    lpfFreqLabel.setFont (juce::Font (9.0f));
+    lpfFreqLabel.setColour (juce::Label::textColourId, kTextDim);
+    lpfFreqLabel.setJustificationType (juce::Justification::centred);
+    addAndMakeVisible (lpfFreqLabel);
+
+    lpfQSlider.setNumDecimalPlacesToDisplay (2);
+    lpfQSlider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 44, 13);
+    lpfQSlider.setTooltip ("Low-pass filter Q (resonance)");
+    lpfQSlider.setColour (juce::Slider::rotarySliderFillColourId,
+                          juce::Colour (255, 140, 80));
+    addAndMakeVisible (lpfQSlider);
+    lpfQAtt = std::make_unique<SliderAtt> (p.apvts, "lpfQ", lpfQSlider);
+
+    lpfQLabel.setText ("Q", juce::dontSendNotification);
+    lpfQLabel.setFont (juce::Font (9.0f));
+    lpfQLabel.setColour (juce::Label::textColourId, kTextDim);
+    lpfQLabel.setJustificationType (juce::Justification::centred);
+    addAndMakeVisible (lpfQLabel);
+
+    //──────────────────────────────────────────────────────────────────────────
+    // Auto-gain
+    autoGainToggle.setClickingTogglesState (true);
+    autoGainToggle.setTooltip ("Auto-Gain: measures broadband filter gain and"
+                               " applies inverse makeup gain");
+    addAndMakeVisible (autoGainToggle);
+    autoGainAtt = std::make_unique<ButtonAtt> (p.apvts, "autoGain", autoGainToggle);
+
     setSize (kBaseW, kBaseH);
     applyZoom();
     updateBandLabels();
-    startTimerHz (10);
+    startTimerHz (30);  // 30Hz for smooth meter
 }
 
 MusicalEQAudioProcessorEditor::~MusicalEQAudioProcessorEditor()
@@ -514,6 +730,7 @@ void MusicalEQAudioProcessorEditor::applyZoom()
 void MusicalEQAudioProcessorEditor::timerCallback()
 {
     updateBandLabels();
+    repaint();  // triggers meter + toggle state refresh
     // Sync combo in case param changed from host automation
     const int key = juce::jlimit (0, 11,
         (int)processorRef.apvts.getRawParameterValue ("key")->load());
@@ -541,36 +758,54 @@ void MusicalEQAudioProcessorEditor::updateBandLabels()
 //==============================================================================
 void MusicalEQAudioProcessorEditor::resized()
 {
-    const int W = kBaseW, H = kBaseH;
+    const int W = kBaseW;
 
-    // Zoom button (stored for mouseDown hit-test)
+    // ── Header
     zoomButtonBounds = { 8, 12, 38, 26 };
-
-    // Key controls in header
     keyLabel.setBounds (50, 14, 30, 18);
     keyCombo.setBounds (83, 12, 68, 26);
 
-    // EQ display: y=50, height=205
-    eqDisplay->setBounds (8, 50, W - 16, 205);
+    // ── EQ display: y=50, height=218
+    eqDisplay->setBounds (8, 50, W - 16, 218);
 
-    // Band columns
-    // Available width: W - 2*8 = 744, 9 cols = 82.67 each
-    const float margin  = 8.0f;
-    const float colW    = (W - 2.0f * margin) / MusicalEQAudioProcessor::kNumBands;
-    const int   bandTop = 258;   // top of band section (below display + gap)
+    // ── Filter strip: y=272..358 (86px)
+    const int FS = 272;   // filter strip top
+
+    // HPF section (left, x=8..228)
+    hpfToggle.setBounds      ( 8, FS + 10, 42, 22);
+    hpfFreqLabel.setBounds   (58, FS +  2, 56, 12);
+    hpfFreqSlider.setBounds  (58, FS + 14, 56, 62);
+    hpfQLabel.setBounds      (122, FS +  2, 44, 12);
+    hpfQSlider.setBounds     (122, FS + 14, 44, 62);
+
+    // LPF section (right, mirrored, x=528..752)
+    lpfQLabel.setBounds      (530, FS +  2, 44, 12);
+    lpfQSlider.setBounds     (530, FS + 14, 44, 62);
+    lpfFreqLabel.setBounds   (582, FS +  2, 56, 12);
+    lpfFreqSlider.setBounds  (582, FS + 14, 56, 62);
+    lpfToggle.setBounds      (710, FS + 10, 42, 22);
+
+    // AUTO section (centre)
+    autoGainToggle.setBounds (334, FS + 10, 92, 22);
+    // (meter is painted in paint(), no separate component)
+
+    // ── Band section: y=360..560 (200px)
+    const float margin = 8.0f;
+    const float colW   = (W - 2.0f * margin) / MusicalEQAudioProcessor::kNumBands;
+    const int   bandTop = 360;
 
     for (int i = 0; i < MusicalEQAudioProcessor::kNumBands; ++i)
     {
-        auto& bc    = bands[i];
-        int   cx    = (int)(margin + (i + 0.5f) * colW);
-        int   knobW = 60;
-        int   half  = knobW / 2;
+        auto& bc  = bands[i];
+        int   cx  = (int)(margin + (i + 0.5f) * colW);
+        int   kW  = 60;
+        int   half = kW / 2;
 
-        bc.freqLabel.setBounds (cx - half,     bandTop,       knobW, 16);
-        bc.gainSlider.setBounds(cx - half,     bandTop + 16,  knobW, 74);
-        bc.gainLabel.setBounds (cx - half,     bandTop + 90,  knobW, 14);
-        bc.qSlider.setBounds   (cx - half,     bandTop + 104, knobW, 74);
-        bc.qLabel.setBounds    (cx - half,     bandTop + 178, knobW, 14);
+        bc.freqLabel.setBounds  (cx - half, bandTop,       kW, 16);
+        bc.gainSlider.setBounds (cx - half, bandTop + 16,  kW, 74);
+        bc.gainLabel.setBounds  (cx - half, bandTop + 90,  kW, 14);
+        bc.qSlider.setBounds    (cx - half, bandTop + 104, kW, 74);
+        bc.qLabel.setBounds     (cx - half, bandTop + 178, kW, 14);
     }
 }
 
@@ -641,16 +876,88 @@ void MusicalEQAudioProcessorEditor::paint (juce::Graphics& g)
     // ── Version ──────────────────────────────────────────────────────────────
     g.setFont (juce::Font (8.5f));
     g.setColour (kTextDim.withAlpha (0.50f));
-    g.drawText ("v1.0", W - 52, 38, 40, 10,
+    g.drawText ("v1.1", W - 52, 38, 40, 10,
                 juce::Justification::centredRight, false);
 
     // ── Logo icon ────────────────────────────────────────────────────────────
     drawLogoIcon (g, juce::Rectangle<float> (
         (float)(W - 44), 6.0f, 36.0f, 36.0f));
 
+    // ── Filter strip panel ───────────────────────────────────────────────────
+    {
+        const int FS = 272;
+        juce::Rectangle<float> strip (6.f, (float)FS - 2, W - 12.f, 90.f);
+        g.setColour (kPanel.withAlpha (0.55f));
+        g.fillRoundedRectangle (strip, 6.f);
+        g.setColour (kDivider.withAlpha (0.28f));
+        g.drawRoundedRectangle (strip.reduced (0.5f), 5.5f, 0.8f);
+
+        // HPF / LPF section labels
+        g.setFont (juce::Font (8.5f, juce::Font::bold));
+        g.setColour (juce::Colour (80, 200, 255).withAlpha (0.70f));
+        g.drawText ("HIGH PASS", 8, FS - 2, 120, 12,
+                    juce::Justification::centredLeft, false);
+        g.setColour (juce::Colour (255, 140, 80).withAlpha (0.70f));
+        g.drawText ("LOW PASS",  W - 128, FS - 2, 120, 12,
+                    juce::Justification::centredRight, false);
+
+        // Center separator lines
+        g.setColour (kDivider.withAlpha (0.25f));
+        g.fillRect (230.f, (float)(FS + 4), 0.6f, 74.f);
+        g.fillRect (524.f, (float)(FS + 4), 0.6f, 74.f);
+
+        // AUTO GAIN label above toggle
+        g.setFont (juce::Font (8.5f, juce::Font::bold));
+        g.setColour (kTextDim.withAlpha (0.55f));
+        g.drawText ("AUTO GAIN", 300, FS - 2, 160, 12,
+                    juce::Justification::centred, false);
+
+        // ── Output level meter ───────────────────────────────────────────────
+        const float db     = processorRef.outputLevelDb.load();
+        const bool  agOn   = processorRef.apvts.getRawParameterValue ("autoGain")->load() > 0.5f;
+        const int mx2 = 244, my = FS + 44, mw = 272, mh = 22;
+        const float normLevel = juce::jlimit (0.f, 1.f, (db + 60.f) / 66.f);
+        const int fillW = (int)(normLevel * mw);
+
+        // Meter track background
+        g.setColour (juce::Colour (8, 10, 18));
+        g.fillRoundedRectangle ((float)mx2, (float)my, (float)mw, (float)mh, 3.f);
+        g.setColour (kDivider.withAlpha (0.3f));
+        g.drawRoundedRectangle ((float)mx2, (float)my, (float)mw, (float)mh, 3.f, 0.8f);
+
+        // Meter fill with colour gradient: green → yellow → red
+        if (fillW > 0)
+        {
+            juce::ColourGradient meterGrad (
+                juce::Colour ( 65, 200,  80), (float)mx2,          (float)my,
+                juce::Colour (220,  60,  60), (float)(mx2 + mw),   (float)my, false);
+            meterGrad.addColour (0.75, juce::Colour (230, 200, 50));
+            g.setGradientFill (meterGrad);
+            g.setOpacity (agOn ? 1.0f : 0.4f);
+            g.fillRoundedRectangle ((float)mx2, (float)my,
+                                    (float)fillW, (float)mh, 3.f);
+            g.setOpacity (1.0f);
+        }
+
+        // Clip indicator (last 3px of meter goes red when db > -3)
+        if (db > -3.f)
+        {
+            g.setColour (juce::Colour (255, 50, 50).withAlpha (0.9f));
+            g.fillRoundedRectangle ((float)(mx2 + mw - 4), (float)my, 4.f, (float)mh, 2.f);
+        }
+
+        // dB text
+        g.setFont (juce::Font (9.5f, juce::Font::bold));
+        g.setColour (db > -6.f ? kTextMain : kTextDim.withAlpha (0.65f));
+        juce::String dbTxt = (db <= -120.f) ? "-inf" :
+                             (db >= 0.f ? juce::String (db, 1) :
+                              juce::String (db, 1)) + " dB";
+        g.drawText (dbTxt, mx2, my, mw, mh, juce::Justification::centred, false);
+    }
+
     // ── Band section panel ───────────────────────────────────────────────────
     {
-        juce::Rectangle<float> panel (6.0f, 254.0f, W - 12.0f, H - 260.0f);
+        juce::Rectangle<float> panel (6.0f, 358.0f, W - 12.0f, kBaseH - 364.0f);
         g.setColour (kPanel.withAlpha (0.55f));
         g.fillRoundedRectangle (panel, 6.0f);
         g.setColour (kDivider.withAlpha (0.28f));
@@ -663,7 +970,7 @@ void MusicalEQAudioProcessorEditor::paint (juce::Graphics& g)
         {
             float x = margin + i * colW;
             g.setColour (kDivider.withAlpha (0.15f));
-            g.fillRect (x, 258.0f, 0.6f, H - 268.0f);
+            g.fillRect (x, 362.0f, 0.6f, kBaseH - 370.0f);
         }
     }
 }

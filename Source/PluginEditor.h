@@ -36,8 +36,28 @@ private:
     static constexpr float       kZoomFactors[] = { 1.0f, 1.5f, 2.0f };
     static constexpr const char* kZoomLabels[]  = { "1x", "1.5x", "2x" };
     static constexpr int kBaseW = 760;
-    static constexpr int kBaseH = 460;
+    static constexpr int kBaseH = 560;
     juce::Rectangle<int> zoomButtonBounds;
+
+    using SliderAtt = juce::AudioProcessorValueTreeState::SliderAttachment;
+    using ButtonAtt = juce::AudioProcessorValueTreeState::ButtonAttachment;
+
+    // HPF / LPF strip
+    juce::TextButton hpfToggle { "HPF" };
+    juce::Slider     hpfFreqSlider { juce::Slider::RotaryVerticalDrag, juce::Slider::TextBoxBelow };
+    juce::Slider     hpfQSlider    { juce::Slider::RotaryVerticalDrag, juce::Slider::TextBoxBelow };
+    juce::Label      hpfFreqLabel, hpfQLabel;
+
+    juce::TextButton lpfToggle { "LPF" };
+    juce::Slider     lpfFreqSlider { juce::Slider::RotaryVerticalDrag, juce::Slider::TextBoxBelow };
+    juce::Slider     lpfQSlider    { juce::Slider::RotaryVerticalDrag, juce::Slider::TextBoxBelow };
+    juce::Label      lpfFreqLabel, lpfQLabel;
+
+    // Auto-gain
+    juce::TextButton autoGainToggle { "AUTO" };
+
+    std::unique_ptr<SliderAtt> hpfFreqAtt, hpfQAtt, lpfFreqAtt, lpfQAtt;
+    std::unique_ptr<ButtonAtt> hpfEnableAtt, lpfEnableAtt, autoGainAtt;
 
     // Per-band controls (9 bands)
     struct BandControls
@@ -52,7 +72,6 @@ private:
     };
     std::array<BandControls, MusicalEQAudioProcessor::kNumBands> bands;
 
-    using SliderAtt = juce::AudioProcessorValueTreeState::SliderAttachment;
     std::array<std::unique_ptr<SliderAtt>,
                MusicalEQAudioProcessor::kNumBands> gainAtts;
     std::array<std::unique_ptr<SliderAtt>,

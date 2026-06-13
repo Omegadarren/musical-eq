@@ -5,15 +5,22 @@
 
 //==============================================================================
 /**
- * Musical EQ — 9-band peaking (bell) EQ where all band centre frequencies
- * are harmonic octave multiples of a selected musical root note.
- *
- * Key C (root 65.41 Hz) -> bands at: 65, 131, 262, 524, 1047, 2093, 4186, 8372, 16744 Hz
+ * Musical EQ — 9-band peaking EQ + high-pass + low-pass filters.
+ * All band centre frequencies are harmonic octave multiples of a selected root note.
+ * HPF/LPF use 2nd-order Butterworth responses (adjustable Q).
+ * Auto-Gain measures the broadband filter gain and applies inverse makeup gain.
  *
  * Parameters:
- *   key     - AudioParameterChoice  C through B (root in octave 2)
- *   gainN   - AudioParameterFloat   Band N gain  -18 to +18 dB  (N = 0-8)
- *   qN      - AudioParameterFloat   Band N Q      0.1 to 10.0
+ *   key       - AudioParameterChoice  C through B (root in octave 2)
+ *   gainN     - AudioParameterFloat   Band N gain  -18 to +18 dB  (N = 0-8)
+ *   qN        - AudioParameterFloat   Band N Q      0.1 to 10.0
+ *   hpfEnable - AudioParameterBool    High-pass on/off
+ *   hpfFreq   - AudioParameterFloat   HPF cutoff 20-2000 Hz
+ *   hpfQ      - AudioParameterFloat   HPF Q       0.1-10
+ *   lpfEnable - AudioParameterBool    Low-pass on/off
+ *   lpfFreq   - AudioParameterFloat   LPF cutoff 500-20000 Hz
+ *   lpfQ      - AudioParameterFloat   LPF Q       0.1-10
+ *   autoGain  - AudioParameterBool    Auto-gain on/off
  */
 class MusicalEQAudioProcessor : public juce::AudioProcessor
 {
@@ -60,23 +67,35 @@ public:
 
     double getCurrentSampleRate() const noexcept { return currentSampleRate; }
 
+    // Output level for the meter (dBFS, -120 when silent)
+    std::atomic<float> outputLevelDb { -120.f };
+
     int editorZoomIndex = 0;
 
 private:
     //==========================================================================
-    // Biquad peaking EQ filter — transposed direct-form II, stereo state
+    // Biquad filter — transposed direct-form II, stereo state
+    // Supports peaking, high-pass, and low-pass types
     struct Biquad
     {
         float b0 = 1.f, b1 = 0.f, b2 = 0.f, a1 = 0.f, a2 = 0.f;
         float s1[2] = {}, s2[2] = {};
 
-        void makePeaking (float centreHz, float gainDb, float q, float sr) noexcept;
-        float process    (float x, int ch) noexcept;
-        void  reset      () noexcept;
+        void makePeaking  (float centreHz, float gainDb, float q, float sr) noexcept;
+        void makeHighPass (float cutoffHz, float q, float sr) noexcept;
+        void makeLowPass  (float cutoffHz, float q, float sr) noexcept;
+        void makeBypass   () noexcept;
+        float process     (float x, int ch) noexcept;
+        void  reset       () noexcept;
     };
 
     std::array<Biquad, kNumBands> filters;
+    Biquad hpfFilter, lpfFilter;
     double currentSampleRate = 44100.0;
+
+    // Auto-gain state
+    float autoGainDb       = 0.f;
+    float outputRmsSmooth  = 0.f;   // smoothed RMS for meter
 
     static juce::AudioProcessorValueTreeState::ParameterLayout buildLayout();
 
