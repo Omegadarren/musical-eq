@@ -613,11 +613,35 @@ MusicalEQAudioProcessorEditor::MusicalEQAudioProcessorEditor (
         bc.qLabel.setJustificationType (juce::Justification::centred);
         addAndMakeVisible (bc.qLabel);
 
+        // Saturation slider
+        bc.satSlider.setRange (0.0, 100.0, 1.0);
+        bc.satSlider.textFromValueFunction = [](double v) -> juce::String {
+            return v < 0.5 ? juce::String ("Off")
+                           : juce::String (juce::roundToInt (v)) + " %";
+        };
+        bc.satSlider.valueFromTextFunction = [](const juce::String& t) -> double {
+            if (t.trim().equalsIgnoreCase ("Off")) return 0.0;
+            return t.getDoubleValue();
+        };
+        bc.satSlider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 56, 14);
+        bc.satSlider.setTooltip ("Band " + juce::String (i + 1)
+            + " saturation — 0 = Off, 100% = maximum harmonic drive applied after this band's filter");
+        bc.satSlider.setColour (juce::Slider::rotarySliderFillColourId, kBandColours[i]);
+        addAndMakeVisible (bc.satSlider);
+
+        bc.satLabel.setText ("SAT", juce::dontSendNotification);
+        bc.satLabel.setFont (juce::Font (9.0f));
+        bc.satLabel.setColour (juce::Label::textColourId, kTextDim);
+        bc.satLabel.setJustificationType (juce::Justification::centred);
+        addAndMakeVisible (bc.satLabel);
+
         // Attachments
         gainAtts[i] = std::make_unique<SliderAtt> (
             p.apvts, "gain" + juce::String (i), bc.gainSlider);
         qAtts[i]    = std::make_unique<SliderAtt> (
             p.apvts, "q"    + juce::String (i), bc.qSlider);
+        satAtts[i]  = std::make_unique<SliderAtt> (
+            p.apvts, "sat"  + juce::String (i), bc.satSlider);
     }
 
     // Restore zoom
@@ -813,6 +837,8 @@ void MusicalEQAudioProcessorEditor::resized()
         bc.gainLabel.setBounds  (cx - half, bandTop + 90,  kW, 14);
         bc.qSlider.setBounds    (cx - half, bandTop + 104, kW, 74);
         bc.qLabel.setBounds     (cx - half, bandTop + 178, kW, 14);
+        bc.satSlider.setBounds  (cx - half, bandTop + 192, kW, 64);
+        bc.satLabel.setBounds   (cx - half, bandTop + 256, kW, 14);
     }
 }
 
@@ -883,7 +909,7 @@ void MusicalEQAudioProcessorEditor::paint (juce::Graphics& g)
     // ── Version ──────────────────────────────────────────────────────────────
     g.setFont (juce::Font (8.5f));
     g.setColour (kTextDim.withAlpha (0.50f));
-    g.drawText ("v1.1", W - 52, 38, 40, 10,
+    g.drawText ("v1.2", W - 52, 38, 40, 10,
                 juce::Justification::centredRight, false);
 
     // ── Logo icon ────────────────────────────────────────────────────────────

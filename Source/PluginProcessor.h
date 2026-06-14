@@ -14,6 +14,7 @@
  *   key       - AudioParameterChoice  C through B (root in octave 2)
  *   gainN     - AudioParameterFloat   Band N gain  -18 to +18 dB  (N = 0-8)
  *   qN        - AudioParameterFloat   Band N Q      0.1 to 10.0
+ *   satN      - AudioParameterFloat   Band N saturation  0-100%   (N = 0-8)
  *   hpfEnable - AudioParameterBool    High-pass on/off
  *   hpfFreq   - AudioParameterFloat   HPF cutoff 20-2000 Hz
  *   hpfQ      - AudioParameterFloat   HPF Q       0.1-10

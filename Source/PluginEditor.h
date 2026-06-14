@@ -37,7 +37,7 @@ private:
     static constexpr float       kZoomFactors[] = { 1.0f, 1.5f, 2.0f };
     static constexpr const char* kZoomLabels[]  = { "1x", "1.5x", "2x" };
     static constexpr int kBaseW = 760;
-    static constexpr int kBaseH = 560;
+    static constexpr int kBaseH = 640;
     juce::Rectangle<int> zoomButtonBounds;
 
     using SliderAtt = juce::AudioProcessorValueTreeState::SliderAttachment;
@@ -69,6 +69,9 @@ private:
         juce::Slider qSlider   { juce::Slider::RotaryVerticalDrag,
                                   juce::Slider::TextBoxBelow };
         juce::Label  qLabel;
+        juce::Slider satSlider { juce::Slider::RotaryVerticalDrag,
+                                 juce::Slider::TextBoxBelow };
+        juce::Label  satLabel;
         juce::Label  freqLabel;
     };
     std::array<BandControls, MusicalEQAudioProcessor::kNumBands> bands;
@@ -77,6 +80,8 @@ private:
                MusicalEQAudioProcessor::kNumBands> gainAtts;
     std::array<std::unique_ptr<SliderAtt>,
                MusicalEQAudioProcessor::kNumBands> qAtts;
+    std::array<std::unique_ptr<SliderAtt>,
+               MusicalEQAudioProcessor::kNumBands> satAtts;
 
     juce::TooltipWindow tooltipWindow { this, 700 };
 

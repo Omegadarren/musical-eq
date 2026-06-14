@@ -43,6 +43,13 @@ MusicalEQAudioProcessor::buildLayout()
             "Band " + juce::String (i + 1) + " Q",
             juce::NormalisableRange<float> (0.1f, 10.0f, 0.01f, 0.4f),
             1.0f));
+
+        layout.add (std::make_unique<juce::AudioParameterFloat> (
+            "sat" + juce::String (i),
+            "Band " + juce::String (i + 1) + " Saturation",
+            juce::NormalisableRange<float> (0.0f, 100.0f, 1.0f),
+            0.0f,
+            juce::AudioParameterFloatAttributes().withLabel ("%")));
     }
 
     // High-pass filter
@@ -271,7 +278,12 @@ void MusicalEQAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
     const float makeupLinear = std::pow (10.f, autoGainDb / 20.f);
 
-    // Apply signal chain: HPF -> peaking bands -> LPF -> auto-gain makeup
+    // Per-band saturation amounts (read once per block for efficiency)
+    float satFracs[kNumBands];
+    for (int i = 0; i < kNumBands; ++i)
+        satFracs[i] = apvts.getRawParameterValue ("sat" + juce::String (i))->load() * 0.01f;
+
+    // Apply signal chain: HPF -> peaking bands (with optional saturation) -> LPF -> auto-gain
     float sumSq = 0.f;
     for (int ch = 0; ch < numCh; ++ch)
     {
@@ -280,8 +292,17 @@ void MusicalEQAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         {
             float s = data[n];
             s = hpfFilter.process (s, ch);
-            for (auto& f : filters)
-                s = f.process (s, ch);
+            for (int i = 0; i < kNumBands; ++i)
+            {
+                s = filters[i].process (s, ch);
+                if (satFracs[i] > 0.001f)
+                {
+                    // Soft-clip with gain compensation so unity-gain at small signals.
+                    // Drive range: 1.0 (0%) to 4.0 (100%). tanh(x*d)/d preserves level.
+                    const float drive = 1.0f + satFracs[i] * 3.0f;
+                    s = std::tanh (s * drive) / drive;
+                }
+            }
             s = lpfFilter.process (s, ch);
             s *= makeupLinear;
             data[n] = s;
