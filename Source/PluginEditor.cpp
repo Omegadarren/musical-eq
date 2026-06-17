@@ -482,7 +482,7 @@ private:
                 juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
         }
 
-        // --- Band marker dots on combined curve ---
+        // --- Band marker dots + frequency labels on combined curve ---
         for (int b = 0; b < MusicalEQAudioProcessor::kNumBands; ++b)
         {
             if (bi[b].centre > kMaxFreq * 1.2f) continue;
@@ -500,6 +500,26 @@ private:
             // White centre dot
             g.setColour (juce::Colours::white.withAlpha (0.9f));
             g.fillEllipse (fx - 2.5f, fy - 2.5f, 5.f, 5.f);
+
+            // Frequency label — above dot if room, below if near top edge
+            float freq = bi[b].centre;
+            juce::String freqTxt = freq >= 1000.f
+                ? juce::String (freq / 1000.f, freq >= 10000.f ? 0 : 1) + "k"
+                : juce::String (juce::roundToInt (freq));
+
+            const float lblW = 36.f, lblH = 12.f;
+            // Clamp label horizontally so it doesn't spill off the plot
+            float lblX = juce::jlimit (mx, mx + plotW - lblW, fx - lblW * 0.5f);
+            float lblY = (fy - 18.f >= mt + 2.f) ? fy - 18.f : fy + 10.f;
+
+            // Small dark backing pill for readability
+            g.setColour (juce::Colour (5, 7, 14).withAlpha (0.65f));
+            g.fillRoundedRectangle (lblX - 1.f, lblY - 1.f, lblW + 2.f, lblH + 2.f, 3.f);
+
+            g.setFont (juce::Font (9.f, juce::Font::bold));
+            g.setColour (col.brighter (0.3f));
+            g.drawText (freqTxt, (int)lblX, (int)lblY, (int)lblW, (int)lblH,
+                        juce::Justification::centred, false);
         }
 
         // --- Border ---
@@ -909,7 +929,7 @@ void MusicalEQAudioProcessorEditor::paint (juce::Graphics& g)
     // ── Version ──────────────────────────────────────────────────────────────
     g.setFont (juce::Font (8.5f));
     g.setColour (kTextDim.withAlpha (0.50f));
-    g.drawText ("v1.2", W - 52, 38, 40, 10,
+    g.drawText ("v1.3", W - 52, 38, 40, 10,
                 juce::Justification::centredRight, false);
 
     // ── Logo icon ────────────────────────────────────────────────────────────
