@@ -297,10 +297,17 @@ void MusicalEQAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                 s = filters[i].process (s, ch);
                 if (satFracs[i] > 0.001f)
                 {
-                    // Soft-clip with gain compensation so unity-gain at small signals.
-                    // Drive range: 1.0 (0%) to 4.0 (100%). tanh(x*d)/d preserves level.
-                    const float drive = 1.0f + satFracs[i] * 3.0f;
-                    s = std::tanh (s * drive) / drive;
+                    // Asymmetric (even-harmonic) soft saturation.
+                    // A small bias shifts the operating point so positive and
+                    // negative half-cycles clip differently, generating 2nd-order
+                    // (and higher even) harmonics — warm and musical rather than
+                    // the harsh odd harmonics produced by symmetric tanh alone.
+                    // Drive range: 1.0 (0%) → 3.0 (100%).
+                    const float drive    = 1.0f + satFracs[i] * 2.0f;
+                    const float bias     = 0.12f * satFracs[i];          // asymmetry amount
+                    const float dcOffset = std::tanh (bias * drive);     // DC to subtract
+                    const float norm     = 1.0f / drive;
+                    s = (std::tanh ((s + bias) * drive) - dcOffset) * norm;
                 }
             }
             s = lpfFilter.process (s, ch);

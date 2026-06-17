@@ -929,7 +929,7 @@ void MusicalEQAudioProcessorEditor::paint (juce::Graphics& g)
     // ── Version ──────────────────────────────────────────────────────────────
     g.setFont (juce::Font (8.5f));
     g.setColour (kTextDim.withAlpha (0.50f));
-    g.drawText ("v1.3", W - 52, 38, 40, 10,
+    g.drawText ("v1.4", W - 52, 38, 40, 10,
                 juce::Justification::centredRight, false);
 
     // ── Logo icon ────────────────────────────────────────────────────────────
