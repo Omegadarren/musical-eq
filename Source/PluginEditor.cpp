@@ -1,4 +1,5 @@
-#include "PluginEditor.h"
+﻿#include "PluginEditor.h"
+#include "Ui/PlateLookAndFeel.h"
 
 // Out-of-class definitions (C++14/17 ODR safety)
 constexpr float       MusicalEQAudioProcessorEditor::kZoomFactors[];
@@ -7,168 +8,30 @@ constexpr const char* MusicalEQAudioProcessorEditor::kZoomLabels[];
 //==============================================================================
 //  Colour palette
 //==============================================================================
-static const juce::Colour kBg       {  20,  21,  32 };
-static const juce::Colour kPanel    {  14,  15,  24 };
-static const juce::Colour kHeader   {  22,  54,  98 };
-static const juce::Colour kAccent   {  65, 145, 210 };
-static const juce::Colour kTextMain { 225, 238, 255 };
-static const juce::Colour kTextDim  { 115, 152, 195 };
-static const juce::Colour kDivider  {  48,  82, 124 };
+using T = PlateUi::Theme;
+static const juce::Colour kBg       = T::background();
+static const juce::Colour kPanel    = T::surface();
+static const juce::Colour kHeader   = T::surfaceRaised();
+static const juce::Colour kAccent   = T::accent();
+static const juce::Colour kTextMain = T::text();
+static const juce::Colour kTextDim  = T::textDim();
+static const juce::Colour kDivider  = T::border();
 
-// Rainbow-ish band colours (9 bands)
+// Warm complement band colours (9 bands)
 static const juce::Colour kBandColours[9] = {
-    juce::Colour (100, 149, 237),   // band 0 – cornflower blue
-    juce::Colour ( 65, 190, 210),   // band 1 – cyan
-    juce::Colour ( 65, 210, 130),   // band 2 – green
-    juce::Colour (140, 220,  65),   // band 3 – yellow-green
-    juce::Colour (220, 200,  65),   // band 4 – yellow
-    juce::Colour (230, 150,  65),   // band 5 – orange
-    juce::Colour (220,  90,  90),   // band 6 – red
-    juce::Colour (180,  80, 200),   // band 7 – purple
-    juce::Colour (130,  80, 220),   // band 8 – violet
+    juce::Colour (0xff4eb0d8),   // band 0 – steel blue
+    juce::Colour (0xff42c8b8),   // band 1 – teal
+    juce::Colour (0xff52c890),   // band 2 – jade
+    juce::Colour (0xffa8c848),   // band 3 – yellow-green
+    juce::Colour (0xfff0b868),   // band 4 – gold (matches accent)
+    juce::Colour (0xffe08840),   // band 5 – amber
+    juce::Colour (0xffd06050),   // band 6 – coral
+    juce::Colour (0xffc070c0),   // band 7 – mauve
+    juce::Colour (0xff9878d0),   // band 8 – lavender
 };
 
-//==============================================================================
-//  Custom LookAndFeel
-//==============================================================================
-class MusicalEQLAF : public juce::LookAndFeel_V4
-{
-public:
-    MusicalEQLAF()
-    {
-        // Sliders / knobs
-        setColour (juce::Slider::thumbColourId,             kAccent);
-        setColour (juce::Slider::rotarySliderFillColourId,  kAccent);
-        setColour (juce::Slider::rotarySliderOutlineColourId, kDivider);
-        setColour (juce::Slider::textBoxTextColourId,        kTextDim);
-        setColour (juce::Slider::textBoxBackgroundColourId,  kPanel.darker (0.3f));
-        setColour (juce::Slider::textBoxOutlineColourId,     juce::Colours::transparentBlack);
-        setColour (juce::Slider::textBoxHighlightColourId,   kAccent.withAlpha (0.4f));
-
-        // Labels
-        setColour (juce::Label::textColourId,                kTextMain);
-        setColour (juce::Label::backgroundColourId,          juce::Colours::transparentBlack);
-
-        // ComboBox
-        setColour (juce::ComboBox::textColourId,             kTextMain);
-        setColour (juce::ComboBox::backgroundColourId,       kPanel);
-        setColour (juce::ComboBox::outlineColourId,          kDivider);
-        setColour (juce::ComboBox::arrowColourId,            kTextDim);
-        setColour (juce::ComboBox::buttonColourId,           kPanel);
-        setColour (juce::ComboBox::focusedOutlineColourId,   kAccent.withAlpha (0.7f));
-
-        // PopupMenu
-        setColour (juce::PopupMenu::backgroundColourId,      juce::Colour (14, 16, 26));
-        setColour (juce::PopupMenu::textColourId,            kTextMain);
-        setColour (juce::PopupMenu::highlightedBackgroundColourId, kAccent.withAlpha (0.30f));
-        setColour (juce::PopupMenu::highlightedTextColourId, kTextMain);
-
-        // Buttons
-        setColour (juce::TextButton::buttonColourId,   kPanel);
-        setColour (juce::TextButton::buttonOnColourId, kAccent.withAlpha (0.30f));
-        setColour (juce::TextButton::textColourOnId,   kTextMain);
-        setColour (juce::TextButton::textColourOffId,  kTextDim.withAlpha (0.6f));
-    }
-
-    //--------------------------------------------------------------------------
-    void drawButtonBackground (juce::Graphics& g, juce::Button& b,
-                               const juce::Colour&, bool, bool) override
-    {
-        auto bounds = b.getLocalBounds().toFloat().reduced (0.5f);
-        bool on = b.getToggleState();
-        g.setColour (on ? kAccent.withAlpha (0.28f) : kPanel);
-        g.fillRoundedRectangle (bounds, 5.0f);
-        g.setColour (on ? kAccent : kDivider.withAlpha (0.55f));
-        g.drawRoundedRectangle (bounds.reduced (0.5f), 4.5f, 1.0f);
-    }
-
-    void drawButtonText (juce::Graphics& g, juce::TextButton& b, bool, bool) override
-    {
-        g.setFont (juce::Font (10.0f, juce::Font::bold));
-        g.setColour (b.getToggleState() ? kTextMain : kTextDim.withAlpha (0.6f));
-        g.drawText (b.getButtonText(), b.getLocalBounds(),
-                    juce::Justification::centred, false);
-    }
-
-    //--------------------------------------------------------------------------
-    void drawRotarySlider (juce::Graphics& g, int x, int y, int width, int height,
-                           float sliderPosProportional, float rotaryStartAngle,
-                           float rotaryEndAngle, juce::Slider&) override
-    {
-        const float centreX = x + width  * 0.5f;
-        const float centreY = y + height * 0.5f;
-        const float r       = juce::jmin (width, height) * 0.5f - 4.0f;
-
-        // Track
-        {
-            juce::Path arc;
-            arc.addCentredArc (centreX, centreY, r, r, 0.0f,
-                               rotaryStartAngle, rotaryEndAngle, true);
-            g.setColour (kDivider.withAlpha (0.35f));
-            g.strokePath (arc, juce::PathStrokeType (2.5f,
-                          juce::PathStrokeType::curved,
-                          juce::PathStrokeType::rounded));
-        }
-
-        // Fill arc up to thumb
-        {
-            float fillEnd = rotaryStartAngle +
-                sliderPosProportional * (rotaryEndAngle - rotaryStartAngle);
-            juce::Path fill;
-            fill.addCentredArc (centreX, centreY, r, r, 0.0f,
-                                rotaryStartAngle, fillEnd, true);
-            g.setColour (kAccent.withAlpha (0.75f));
-            g.strokePath (fill, juce::PathStrokeType (2.5f,
-                          juce::PathStrokeType::curved,
-                          juce::PathStrokeType::rounded));
-        }
-
-        // Metallic knob body
-        const float kr = r * 0.62f;
-        juce::ColourGradient grad (
-            juce::Colour (90, 98, 118),  centreX - kr * 0.4f, centreY - kr * 0.5f,
-            juce::Colour (28, 30, 42),   centreX + kr * 0.4f, centreY + kr * 0.5f,
-            false);
-        g.setGradientFill (grad);
-        g.fillEllipse (centreX - kr, centreY - kr, kr * 2.0f, kr * 2.0f);
-
-        g.setColour (kDivider.withAlpha (0.5f));
-        g.drawEllipse (centreX - kr, centreY - kr, kr * 2.0f, kr * 2.0f, 1.0f);
-
-        // Rim highlight
-        juce::ColourGradient rim (
-            juce::Colours::white.withAlpha (0.18f), centreX, centreY - kr,
-            juce::Colours::transparentBlack,         centreX, centreY + kr, false);
-        g.setGradientFill (rim);
-        g.fillEllipse (centreX - kr, centreY - kr, kr * 2.0f, kr * 2.0f);
-
-        // Thumb line
-        float angle = rotaryStartAngle +
-            sliderPosProportional * (rotaryEndAngle - rotaryStartAngle);
-        float tx = centreX + (kr - 4.0f) * std::sin (angle);
-        float ty = centreY - (kr - 4.0f) * std::cos (angle);
-        g.setColour (kTextMain.withAlpha (0.9f));
-        g.drawLine (centreX + (kr * 0.25f) * std::sin (angle),
-                    centreY - (kr * 0.25f) * std::cos (angle),
-                    tx, ty, 1.8f);
-    }
-
-    //--------------------------------------------------------------------------
-    juce::Font getLabelFont (juce::Label&) override
-    {
-        return juce::Font (11.5f);
-    }
-
-    juce::Font getComboBoxFont (juce::ComboBox&) override
-    {
-        return juce::Font (12.5f, juce::Font::bold);
-    }
-
-    juce::Font getPopupMenuFont() override
-    {
-        return juce::Font (13.0f);
-    }
-};
+// Use the shared warm-dark PlateLookAndFeel
+using MusicalEQLAF = PlateUi::PlateLookAndFeel;
 
 //==============================================================================
 //  EQ Curve Display
@@ -880,31 +743,19 @@ void MusicalEQAudioProcessorEditor::paint (juce::Graphics& g)
     const int W = getWidth(), H = getHeight();
 
     // ── Overall background ──────────────────────────────────────────────────
-    g.setColour (kBg);
-    g.fillAll();
+    PlateUi::drawBackground (g, getLocalBounds(), true);
 
-    // ── Header gradient ─────────────────────────────────────────────────────
-    {
-        juce::ColourGradient hdrGrad (
-            kHeader.brighter (0.05f), 0.0f, 0.0f,
-            kHeader.darker   (0.25f), 0.0f, 50.0f, false);
-        g.setGradientFill (hdrGrad);
-        g.fillRect (0, 0, W, 50);
-        g.setColour (kDivider.withAlpha (0.45f));
-        g.fillRect (0, 49, W, 1);
-    }
+    // ── Header bar ──────────────────────────────────────────────────────────
+    PlateUi::drawHeaderBar (g, getLocalBounds(), 50, true);
 
     // ── Zoom button ──────────────────────────────────────────────────────────
     {
         auto& zb = zoomButtonBounds;
-        g.setColour (kPanel.withAlpha (0.65f));
-        g.fillRoundedRectangle (zb.toFloat(), 5.0f);
-        g.setColour (kDivider.withAlpha (0.55f));
-        g.drawRoundedRectangle (zb.toFloat().reduced (0.5f), 4.5f, 0.8f);
-        g.setFont (juce::Font (10.5f, juce::Font::bold));
-        g.setColour (kTextMain);
-        g.drawText (kZoomLabels[zoomIndex], zb, juce::Justification::centred, false);
+        PlateUi::drawFloatingControl (g, zb, kZoomLabels[zoomIndex], false);
     }
+
+    // ── OMEGADARREN brand ────────────────────────────────────────────────────
+    PlateUi::drawBrandMark (g, { 14, 10, 140, 18 }, true);
 
     // ── Title  "MUSICAL EQ" ──────────────────────────────────────────────────
     {
@@ -918,23 +769,21 @@ void MusicalEQAudioProcessorEditor::paint (juce::Graphics& g)
         float startX = (W - totalW) * 0.5f;
         float baseY  = 32.0f;
 
-        g.setColour (kTextMain.withAlpha (0.72f));
+        g.setColour (PlateUi::Theme::text().withAlpha (0.88f));
         g.drawText (part1, (int)startX, (int)(baseY - 14),
                     (int)p1w + 4, 18, juce::Justification::centredLeft, false);
-        g.setColour (kAccent);
+        juce::ColourGradient tGrad (PlateUi::Theme::accentBright(), startX + p1w, baseY - 14.f,
+                                    PlateUi::Theme::accentDeep(),   startX + p1w + p2w, baseY + 4.f, false);
+        g.setGradientFill (tGrad);
         g.drawText (part2, (int)(startX + p1w), (int)(baseY - 14),
                     (int)p2w + 4, 18, juce::Justification::centredLeft, false);
     }
 
     // ── Version ──────────────────────────────────────────────────────────────
     g.setFont (juce::Font (8.5f));
-    g.setColour (kTextDim.withAlpha (0.50f));
+    g.setColour (PlateUi::Theme::textDim().withAlpha (0.50f));
     g.drawText ("v1.4", W - 52, 38, 40, 10,
                 juce::Justification::centredRight, false);
-
-    // ── Logo icon ────────────────────────────────────────────────────────────
-    drawLogoIcon (g, juce::Rectangle<float> (
-        (float)(W - 44), 6.0f, 36.0f, 36.0f));
 
     // ── Filter strip panel ───────────────────────────────────────────────────
     {
