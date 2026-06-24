@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <JuceHeader.h>
 #include <array>
 #include <cmath>
@@ -71,7 +71,7 @@ public:
     // Output level for the meter (dBFS, -120 when silent)
     std::atomic<float> outputLevelDb { -120.f };
 
-    int editorZoomIndex = 0;
+    int editorZoomIndex = 1;
 
 private:
     //==========================================================================

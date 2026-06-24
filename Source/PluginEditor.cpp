@@ -624,7 +624,16 @@ MusicalEQAudioProcessorEditor::~MusicalEQAudioProcessorEditor()
 void MusicalEQAudioProcessorEditor::visibilityChanged()
 {
     if (isVisible())
+    {
         applyZoom();
+        if (! centred)
+        {
+            centred = true;
+            if (auto* tlw = getTopLevelComponent(); tlw != this)
+                if (auto* d = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay())
+                    tlw->setCentrePosition (d->userArea.getCentre());
+        }
+    }
 }
 
 void MusicalEQAudioProcessorEditor::parentHierarchyChanged()
